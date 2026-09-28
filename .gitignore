@@ -1,0 +1,13 @@
+# SFML / C++ Build artifacts & Binaries
+*.exe
+*.obj
+*.o
+*.lib
+*.ilk
+*.pdb
+build/
+bin/
+obj/
+
+# VS Code specific settings (optional, but good practice)
+.vscode/
