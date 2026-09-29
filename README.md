@@ -17,15 +17,15 @@ A custom 2D vector graphics and curve-smoothing editor built in **C++** using th
 
 ##  Controls & Shortcuts
 
-**Left-Click** | Add control point / Click shape line to select & re-edit 
-**Drag Vertex** | Reshape the active control polygon 
-**`S` Key** | Increase Chaikin subdivision smoothing level 
-**`R` Key** | Decrease smoothing level 
-**`O` Key** | Toggle between Open Path and Closed Loop mode 
-**`F` Key** | Finish current shape (locks it and de-selects) 
-**`H` Key** | Toggle original control mesh visibility (Visible / Hidden) 
-**`C` Key** | Clear all shapes from the canvas 
-**`ESC` / `[X]`** | Close the instruction help modal 
+- **Left-Click** | Add control point / Click shape line to select & re-edit 
+- **Drag Vertex** | Reshape the active control polygon 
+- **`S` Key** | Increase Chaikin subdivision smoothing level 
+- **`R` Key** | Decrease smoothing level 
+- **`O` Key** | Toggle between Open Path and Closed Loop mode 
+- **`F` Key** | Finish current shape (locks it and de-selects) 
+- **`H` Key** | Toggle original control mesh visibility (Visible / Hidden) 
+- **`C` Key** | Clear all shapes from the canvas 
+- **`ESC` / `[X]`** | Close the instruction help modal 
 
 ---
 
