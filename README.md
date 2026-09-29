@@ -25,7 +25,7 @@ A custom 2D vector graphics and curve-smoothing editor built in **C++** using th
 - **`F` Key** | Finish current shape (locks it and de-selects) 
 - **`H` Key** | Toggle original control mesh visibility (Visible / Hidden) 
 - **`C` Key** | Clear all shapes from the canvas 
-- **`ESC` / `[X]`** | Close the instruction help modal 
+
 
 ---
 
