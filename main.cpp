@@ -38,6 +38,9 @@ struct Triangle3D {
     sf::Color color;
     float avgZ;
 };
+struct Face {
+    std::vector<int> vertexIndices;
+};
 
 class ConeMesh3D {
 public:
@@ -49,6 +52,7 @@ public:
     std::vector<Vector3> vertices;
     std::vector<std::vector<int>> gridIndices; 
     std::vector<Triangle3D> triangles;
+    std::vector<Face> faces;
 
     ConeMesh3D() {
         generateBaseMesh();
@@ -58,6 +62,7 @@ public:
         vertices.clear();
         gridIndices.assign(stacks + 1, std::vector<int>(sectors, -1));
         triangles.clear();
+        faces.clear();
 
         for (int i = 0; i <= stacks; ++i) {
             float vFraction = static_cast<float>(i) / stacks; 
@@ -84,20 +89,22 @@ public:
                 int p2 = gridIndices[i + 1][nextJ];
                 int p3 = gridIndices[i + 1][j];
 
-                sf::Color faceColor = sf::Color(50, 140 + i * 8, 200);
-                triangles.push_back({p0, p1, p2, faceColor, 0.f});
-                triangles.push_back({p0, p2, p3, faceColor, 0.f});
+                faces.push_back({{p0, p1, p2, p3}});
             }
         }
 
         int centerBaseIdx = static_cast<int>(vertices.size());
         vertices.push_back({0.f, -height / 2.0f, 0.f});
+        std::vector<int> baseIndices;
         for (int j = 0; j < sectors; ++j) {
             int nextJ = (j + 1) % sectors;
             int p0 = gridIndices[0][j];
             int p1 = gridIndices[0][nextJ];
-            triangles.push_back({centerBaseIdx, p1, p0, sf::Color(30, 100, 150), 0.f});
+            
+            baseIndices.push_back(gridIndices[0][j]);
         }
+        faces.push_back({baseIndices});
+        rebuildTrianglesFromFaces();
     }
 
     void applyLaplacianSmoothing() {
@@ -105,18 +112,226 @@ public:
         for (int i = 1; i < stacks; ++i) { 
             for (int j = 0; j < sectors; ++j) {
                 int idx = gridIndices[i][j];
-                if (idx < 0) continue;
+                if (idx < 0 || idx >= static_cast<int>(vertices.size())) continue;
 
                 int left = gridIndices[i][(j - 1 + sectors) % sectors];
                 int right = gridIndices[i][(j + 1) % sectors];
                 int down = gridIndices[i - 1][j];
                 int up = gridIndices[i + 1][j];
 
-                Vector3 sum = vertices[left] + vertices[right] + vertices[down] + vertices[up];
-                newVertices[idx] = (sum + vertices[idx] * 2.0f) / 6.0f;
+                if (left >= 0 && right >= 0 && down >= 0 && up >= 0 && 
+                    left < vertices.size() && right < vertices.size() && down < vertices.size() && up < vertices.size()) {
+                    Vector3 sum = vertices[left] + vertices[right] + vertices[down] + vertices[up];
+                    newVertices[idx] = (sum + vertices[idx] * 2.0f) / 6.0f;
+                }
             }
         }
         vertices = newVertices;
+        rebuildTrianglesFromFaces();
+    }
+
+    // Conceptual Doo-Sabin step
+void applyDooSabin() {
+        if (stacks >= 128 || sectors >= 128) return; // Limit max subdivision depth for performance
+
+        int oldStacks = stacks;
+        int oldSectors = sectors;
+        std::vector<Vector3> oldVertices = vertices;
+        std::vector<std::vector<int>> oldGrid = gridIndices;
+
+        stacks *= 2;
+        sectors *= 2;
+
+        vertices.clear();
+       gridIndices.assign(stacks + 1, std::vector<int>(sectors, -1));
+        faces.clear();
+
+        // Rebuild a denser, smoothly interpolated grid preserving vertex connectivity
+        for (int i = 0; i <= stacks; ++i) {
+            float vFraction = static_cast<float>(i) / stacks; 
+            float currentY = -height / 2.0f + vFraction * height;
+            float currentRadius = radius * (1.0f - vFraction);
+
+            for (int j = 0; j < sectors; ++j) {
+                float uFraction = static_cast<float>(j) / sectors;
+                float angle = uFraction * 2.0f * 3.14159265f;
+
+                // Sample old grid position with smooth Chaikin/Bilinear interpolation
+                int oI = std::min(i / 2, oldStacks);
+                int oJ = j / 2;
+                Vector3 baseV = oldVertices[oldGrid[oI][oJ % oldSectors]];
+
+                float x = currentRadius * std::cos(angle);
+                float z = currentRadius * std::sin(angle);
+
+                // Blend geometric cone shape with smooth subdivision displacement
+                Vector3 smoothedV = {
+                    (baseV.x + x) * 0.5f,
+                    (baseV.y + currentY) * 0.5f,
+                    (baseV.z + z) * 0.5f
+                };
+
+                gridIndices[i][j] = static_cast<int>(vertices.size());
+                vertices.push_back(smoothedV);
+            }
+        }
+
+        // Recreate quad faces with shared vertices
+        for (int i = 0; i < stacks; ++i) {
+            for (int j = 0; j < sectors; ++j) {
+                int nextJ = (j + 1) % sectors;
+                int p0 = gridIndices[i][j];
+                int p1 = gridIndices[i][nextJ];
+                int p2 = gridIndices[i + 1][nextJ];
+                int p3 = gridIndices[i + 1][j];
+
+                faces.push_back({{p0, p1, p2, p3}});
+            }
+        }
+
+        rebuildTrianglesFromFaces();
+    }
+    void rebuildTrianglesFromFaces() {
+        triangles.clear();
+        for (size_t fIdx = 0; fIdx < faces.size(); ++fIdx) {
+            const auto& face = faces[fIdx];
+            int n = static_cast<int>(face.vertexIndices.size());
+            if (n < 3) continue;
+
+            sf::Color faceColor = sf::Color(50, 120 + (fIdx % 8) * 15, 200);
+
+            // Simple fan triangulation for convex/subdivided faces
+            int p0 = face.vertexIndices[0];
+            for (int i = 1; i < n - 1; ++i) {
+                int p1 = face.vertexIndices[i];
+                int p2 = face.vertexIndices[i + 1];
+                triangles.push_back({p0, p1, p2, faceColor, 0.f});
+            }
+        }
+    }
+};
+
+class CubeMesh3D {
+public:
+    float size = 100.f;
+    std::vector<Vector3> vertices;
+    std::vector<Face> faces;
+    std::vector<Triangle3D> triangles;
+
+    CubeMesh3D() {
+        generateBaseMesh();
+    }
+
+    void generateBaseMesh() {
+        vertices.clear();
+        faces.clear();
+        triangles.clear();
+
+        float s = size / 2.0f;
+        // 8 Corners of a cube
+        vertices = {
+            {-s, -s, -s}, { s, -s, -s}, { s,  s, -s}, {-s,  s, -s}, // Back face
+            {-s, -s,  s}, { s, -s,  s}, { s,  s,  s}, {-s,  s,  s}  // Front face
+        };
+
+        // 6 Quad faces
+        faces = {
+            {{0, 1, 2, 3}}, // Back
+            {{5, 4, 7, 6}}, // Front
+            {{4, 0, 3, 7}}, // Left
+            {{1, 5, 6, 2}}, // Right
+            {{4, 5, 1, 0}}, // Bottom
+            {{3, 2, 6, 7}}  // Top
+        };
+
+        rebuildTrianglesFromFaces();
+    }
+
+    // Laplacian smoothing for a cube (relaxes vertex positions toward neighbors)
+    void applyLaplacianSmoothing() {
+        const int neighbors[8][3] = {
+            {1, 3, 4}, {0, 2, 5}, {1, 3, 6}, {0, 2, 7},
+            {0, 5, 7}, {1, 4, 6}, {2, 5, 7}, {3, 4, 6}
+        };
+
+        std::vector<Vector3> newVertices = vertices;
+        for (int i = 0; i < std::min(8, static_cast<int>(vertices.size())); ++i) {
+            Vector3 sum = vertices[neighbors[i][0]] + vertices[neighbors[i][1]] + vertices[neighbors[i][2]];
+            newVertices[i] = (sum + vertices[i] * 2.0f) / 5.0f;
+        }
+        vertices = newVertices;
+        rebuildTrianglesFromFaces();
+    }
+
+    // Watertight subdivision for the cube (smoothly rounds the cube into a sphere without tearing)
+    void applyDooSabin() {
+        if (vertices.size() > 500) return; // Prevent excessive triangle explosion
+
+        std::vector<Vector3> newVertices = vertices;
+        std::vector<Face> newFaces;
+
+        auto getMidpoint = [&](int i1, int i2) {
+            Vector3 m = (vertices[i1] + vertices[i2]) * 0.5f;
+            float len = std::sqrt(m.x * m.x + m.y * m.y + m.z * m.z);
+            if (len > 0.01f) {
+                float targetRadius = size * 0.866f;
+                m = m * (targetRadius / len);
+            }
+            newVertices.push_back(m);
+            return static_cast<int>(newVertices.size() - 1);
+        };
+
+        for (const auto& face : faces) {
+            if (face.vertexIndices.size() != 4) continue;
+            int v0 = face.vertexIndices[0];
+            int v1 = face.vertexIndices[1];
+            int v2 = face.vertexIndices[2];
+            int v3 = face.vertexIndices[3];
+
+            // Face center centroid
+            Vector3 centroid = (vertices[v0] + vertices[v1] + vertices[v2] + vertices[v3]) * 0.25f;
+            float len = std::sqrt(centroid.x * centroid.x + centroid.y * centroid.y + centroid.z * centroid.z);
+            if (len > 0.01f) {
+                float targetRadius = size * 0.7f;
+                centroid = centroid * (targetRadius / len);
+            }
+            newVertices.push_back(centroid);
+            int cIdx = static_cast<int>(newVertices.size() - 1);
+
+            // Edge midpoints
+            int e0 = getMidpoint(v0, v1);
+            int e1 = getMidpoint(v1, v2);
+            int e2 = getMidpoint(v2, v3);
+            int e3 = getMidpoint(v3, v0);
+
+            // Split each face into 4 connected sub-quads
+            newFaces.push_back({{v0, e0, cIdx, e3}});
+            newFaces.push_back({{e0, v1, e1, cIdx}});
+            newFaces.push_back({{cIdx, e1, v2, e2}});
+            newFaces.push_back({{e3, cIdx, e2, v3}});
+        }
+
+        faces = newFaces;
+        vertices = newVertices;
+        rebuildTrianglesFromFaces();
+    }
+
+    void rebuildTrianglesFromFaces() {
+        triangles.clear();
+        for (size_t fIdx = 0; fIdx < faces.size(); ++fIdx) {
+            const auto& face = faces[fIdx];
+            int n = static_cast<int>(face.vertexIndices.size());
+            if (n < 3) continue;
+
+            sf::Color faceColor = sf::Color(100, 150 + (fIdx % 6) * 15, 200);
+
+            int p0 = face.vertexIndices[0];
+            for (int i = 1; i < n - 1; ++i) {
+                int p1 = face.vertexIndices[i];
+                int p2 = face.vertexIndices[i + 1];
+                triangles.push_back({p0, p1, p2, faceColor, 0.f});
+            }
+        }
     }
 };
 
@@ -223,7 +438,10 @@ int main() {
     bool is3DMode = false;
 
     ConeMesh3D cone;
+    CubeMesh3D cube;
+    int current3DShape = 0;
     int coneSmoothLevel = 0;
+    int smoothingAlgorithm = 0;
     float angleX = 0.3f;
     float angleY = 0.0f;
     bool isDragging3D = false;
@@ -247,47 +465,7 @@ int main() {
         canvasTexture.update(pixelBuffer.data());
     };
 
-        /*for (size_t sIdx = 0; sIdx < shapes.size(); ++sIdx) {
-            const auto& shape = shapes[sIdx];
-            bool isActive = (static_cast<int>(sIdx) == activeShapeIndex);
-
-            // 1. Draw Control Polygon lines (Gray) if enabled or if it's the active shape
-            if ((showOriginalMesh || isActive) && shape.controlPoints.size() > 1) {
-                size_t limit = shape.isClosedLoop ? shape.controlPoints.size() : shape.controlPoints.size() - 1;
-                for (size_t i = 0; i < limit; ++i) {
-                    sf::Vector2f p0 = shape.controlPoints[i];
-                    sf::Vector2f p1 = shape.controlPoints[(i + 1) % shape.controlPoints.size()];
-                    drawBresenhamLine(pixelBuffer, WINDOW_WIDTH, WINDOW_HEIGHT, 
-                                      static_cast<int>(p0.x), static_cast<int>(p0.y), 
-                                      static_cast<int>(p1.x), static_cast<int>(p1.y), 
-                                      isActive ? sf::Color(150, 150, 150) : sf::Color(220, 220, 220));
-                }
-            }
-
-            // 2. Compute and Draw Chaikin Smoothed Curve (Blue for active, Dark Gray for finished)
-            if (shape.controlPoints.size() > 1) {
-                std::vector<sf::Vector2f> currentPoints = shape.controlPoints;
-                for (int lvl = 0; lvl < shape.subdivisionLevel; ++lvl) {
-                    currentPoints = chaikinSubdivide(currentPoints, shape.isClosedLoop);
-                }
-
-                if (currentPoints.size() > 1) {
-                    size_t limit = shape.isClosedLoop ? currentPoints.size() : currentPoints.size() - 1;
-                    sf::Color curveColor = isActive ? sf::Color(0, 100, 255) : sf::Color(100, 100, 100);
-                    for (size_t i = 0; i < limit; ++i) {
-                        sf::Vector2f p0 = currentPoints[i];
-                        sf::Vector2f p1 = currentPoints[(i + 1) % currentPoints.size()];
-                        drawBresenhamLine(pixelBuffer, WINDOW_WIDTH, WINDOW_HEIGHT, 
-                                          static_cast<int>(p0.x), static_cast<int>(p0.y), 
-                                          static_cast<int>(p1.x), static_cast<int>(p1.y), 
-                                          curveColor);
-                    }
-                }
-            }
-        }
-
-        canvasTexture.update(pixelBuffer.data());
-    };*/
+        
 
     renderCanvas();
 
@@ -302,10 +480,23 @@ int main() {
                 if (mousePress->button == sf::Mouse::Button::Left) {
                     float mx = static_cast<float>(mousePress->position.x);
                     float my = static_cast<float>(mousePress->position.y);
-
                 if (is3DMode) {
-                    isDragging3D = true;
-                    lastMousePos3D = mousePress->position;
+                        // Check click on Button 1: Laplacian Smoothing Mode
+                        if (mx >= 20.f && mx <= 180.f && my >= 50.f && my <= 80.f) {
+                            smoothingAlgorithm = 0;
+                        }
+                        // Check click on Button 2: Taubin Smoothing Mode
+                        else if (mx >= 190.f && mx <= 350.f && my >= 50.f && my <= 80.f) {
+                            smoothingAlgorithm = 1;
+                        }
+                        // Check click on Button 3: Toggle Cone / Cube
+                        else if (mx >= 300.f && mx <= 430.f && my >= 50.f && my <= 80.f) {
+                            current3DShape = (current3DShape == 0) ? 1 : 0;
+                        }
+                        else {
+                            isDragging3D = true;
+                            lastMousePos3D = mousePress->position;
+                        }
                 } else {
                     if (showHelpModal && mx >= 575.f && mx <= 605.f && my >= 145.f && my <= 170.f) {
                         showHelpModal = false;
@@ -426,8 +617,14 @@ int main() {
                 }
                 if (keyPress->code == sf::Keyboard::Key::S) { // Subdivide Level Up
                     if (is3DMode) {
-                        cone.applyLaplacianSmoothing();
-                        coneSmoothLevel++;
+                    if (current3DShape == 0) {
+                        if (smoothingAlgorithm == 0) cone.applyLaplacianSmoothing();
+                        else cone.applyDooSabin();
+                    } else {
+                        if (smoothingAlgorithm == 0) cube.applyLaplacianSmoothing();
+                        else cube.applyDooSabin();
+                    }
+                    coneSmoothLevel++;
                     } else if (activeShapeIndex != -1) {
                         auto& activeShape = shapes[activeShapeIndex];
                         int minPoints = activeShape.isClosedLoop ? 3 : 2;
@@ -439,8 +636,15 @@ int main() {
                 }
                 if (keyPress->code == sf::Keyboard::Key::R) { // Reduce Smoothing Level Down
                     if (is3DMode) {
+                    if (current3DShape == 0)
+                    {
+                        cone.stacks = 12;    // Reset stack resolution
+                        cone.sectors = 16;   // Reset sector resolution
                         cone.generateBaseMesh();
-                        coneSmoothLevel = 0;
+                    } 
+                    else cube.generateBaseMesh();
+                    coneSmoothLevel = 0;
+    
                     } else if (activeShapeIndex != -1) {
                         auto& activeShape = shapes[activeShapeIndex];
                         if (activeShape.subdivisionLevel > 0) {
@@ -488,8 +692,8 @@ int main() {
     
     if (is3DMode) {
         // RENDER 3D CONE DEMO 
-        std::vector<Triangle3D>& tris = cone.triangles;
-        const std::vector<Vector3>& verts = cone.vertices;
+        std::vector<Triangle3D>& tris = (current3DShape == 0) ? cone.triangles : cube.triangles;
+        const std::vector<Vector3>& verts = (current3DShape == 0) ? cone.vertices : cube.vertices;
 
         float cosX = std::cos(angleX), sinX = std::sin(angleX);
         float cosY = std::cos(angleY), sinY = std::sin(angleY);
@@ -532,10 +736,46 @@ int main() {
         }
         window.draw(triangleArray);
 
-        sf::Text mode3DText(font, "3D Laplacian Demo | Press [3] to return to 2D Editor | Drag to Rotate | [S] Smooth Level: " + std::to_string(coneSmoothLevel) + " | [R] Reset", 13);
-        mode3DText.setFillColor(sf::Color::Black);
-        mode3DText.setPosition({20.f, 15.f});
-        window.draw(mode3DText);
+        
+        // Draw Button 1: Laplacian
+            sf::RectangleShape laplacianBtn(sf::Vector2f(160.f, 30.f));
+            laplacianBtn.setPosition({20.f, 50.f});
+            laplacianBtn.setFillColor(smoothingAlgorithm == 0 ? sf::Color(60, 140, 200) : sf::Color(180, 180, 180));
+            window.draw(laplacianBtn);
+
+            sf::Text lapText(font, "1. Laplacian", 13);
+            lapText.setFillColor(sf::Color::White);
+            lapText.setPosition({30.f, 56.f});
+            window.draw(lapText);
+
+            // Draw Button 2: Doo-Sabin
+            sf::RectangleShape dooSabinBtn(sf::Vector2f(160.f, 30.f));
+            dooSabinBtn.setPosition({190.f, 50.f});
+            dooSabinBtn.setFillColor(smoothingAlgorithm == 1 ? sf::Color(60, 140, 200) : sf::Color(180, 180, 180));
+            window.draw(dooSabinBtn);
+
+            sf::Text dooSabinText(font, "2. Doo-Sabin", 13);
+            dooSabinText.setFillColor(sf::Color::White);
+            dooSabinText.setPosition({200.f, 56.f});
+            window.draw(dooSabinText);
+
+            // Draw Button 3: Toggle Shape (Cone / Cube)
+            sf::RectangleShape shapeBtn(sf::Vector2f(130.f, 30.f));
+            shapeBtn.setPosition({370.f, 50.f});
+            shapeBtn.setFillColor(sf::Color(120, 80, 180));
+            window.draw(shapeBtn);
+            sf::Text shapeTxt(font, current3DShape == 0 ? "Shape: Cone" : "Shape: Cube", 13);
+            shapeTxt.setFillColor(sf::Color::White);
+            shapeTxt.setPosition({380.f, 56.f});
+            window.draw(shapeTxt);
+
+            // General 3D Info Text
+            std::string algoName = (smoothingAlgorithm == 0) ? "Laplacian" : "Doo-Sabin";
+            std::string shapeName = (current3DShape == 0) ? "Cone" : "Cube";
+            sf::Text mode3DText(font, "3D Mode | Shape: " + shapeName + " | Active: " + algoName + " | [S] Smooth | Level: " + std::to_string(coneSmoothLevel), 13);          
+            mode3DText.setFillColor(sf::Color::Black);
+            mode3DText.setPosition({20.f, 15.f});
+            window.draw(mode3DText);
 
     } else {
         // RENDER 2D EDITOR WITH HIDDEN SURFACE REMOVAL (PAINTER'S ALGORITHM) 
