@@ -185,7 +185,7 @@ int main() {
                             smoothingAlgorithm = 1;
                         }
                         // Check click on Button 3: Toggle Cone / Cube
-                        else if (mx >= 300.f && mx <= 430.f && my >= 50.f && my <= 80.f) {
+                        else if (mx >= 370.f && mx <= 500.f && my >= 50.f && my <= 80.f) {
                             current3DShape = (current3DShape == 0) ? 1 : 0;
                         }
                         else {
@@ -606,7 +606,7 @@ int main() {
                 "Left-Click: Add points / Select shape\n"
                 "Drag Points: Reshape active drawing\n"
                 "[3] Key: Toggle 3D Mesh Smoothing Demo\n"
-                "'S' Key: Smooth shape / 3D Laplacian Level Up\n"
+                "'S' Key: Smooth shape / 3D Laplacian or Doo-Sabin Level Up\n"
                 "'R' Key: Reduce smoothing level / Reset 3D\n"
                 "'O' Key: Toggle Open / Closed Loop (Fills shape)\n"
                 "'F' Key: Finish active shape (Lock)\n"
